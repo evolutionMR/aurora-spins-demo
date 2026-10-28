@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aurora Spins (demo)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="demo-note" role="note">Demo site with a made-up brand. No real money, no real accounts.</div>
+
+  <header class="top">
+    <a class="brand" href="#lobby">Aurora Spins</a>
+    <nav aria-label="Main">
+      <a href="#lobby">Lobby</a>
+      <a href="#missions">Missions</a>
+      <a href="#wallet">Wallet</a>
+    </nav>
+    <span class="balance" aria-label="Balance">€[balance]</span>
+  </header>
+
+  <main>
+    <section id="lobby" aria-labelledby="lobby-title">
+      <a class="promo" href="#missions">
+        <span class="promo-kicker">Mission</span>
+        <span class="promo-title">Halloween Mission</span>
+        <span class="promo-text">Make 3 deposits, get 10 free spins.</span>
+        <span class="promo-cta">Join now</span>
+      </a>
+
+      <h1 id="lobby-title" class="section-title">Popular games</h1>
+      <div class="games">
+        <div class="game">[Game]</div>
+        <div class="game">[Game]</div>
+        <div class="game">[Game]</div>
+        <div class="game">[Game]</div>
+        <div class="game">[Game]</div>
+        <div class="game">[Game]</div>
+      </div>
+    </section>
+
+    <section id="missions" aria-labelledby="missions-title">
+      <h2 id="missions-title" class="section-title">Halloween Mission</h2>
+      <p class="muted">Make 3 deposits before 31 October to unlock 10 free spins.</p>
+      <div class="card">
+        <div class="row"><span>Your progress</span><strong id="progress-text">0 of 3</strong></div>
+        <div class="bar" role="progressbar" aria-label="Mission progress" aria-valuemin="0" aria-valuemax="3" aria-valuenow="0"><div id="progress-fill" class="bar-fill"></div></div>
+        <button id="deposit" class="btn">Make a deposit (demo)</button>
+        <p id="reward" class="reward" hidden>10 free spins unlocked. They are in your wallet.</p>
+      </div>
+    </section>
+
+    <section id="wallet" aria-labelledby="wallet-title">
+      <h2 id="wallet-title" class="section-title">Wallet</h2>
+      <div class="card">
+        <div class="row"><span>Cash</span><strong>€[0.00]</strong></div>
+        <div class="row"><span>Bonus balance</span><strong>€[0.00]</strong></div>
+        <div class="row"><span>Free spins</span><strong id="spins">0</strong></div>
+      </div>
+      <div class="rules">
+        <h3>The rules, in plain words</h3>
+        <ul>
+          <li>Free-spin winnings go to your bonus balance.</li>
+          <li>Play them through [10x] and they become cash you can withdraw.</li>
+          <li>Slots count 100%. Table games count [10%].</li>
+          <li>Use them within [7] days.</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">Aurora Spins is a made-up brand for an AI Builder demo.</footer>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "aurora-spins-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Made-up casino player site used to demo the AI Builder.",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node scripts/check.js"
+  },
+  "engines": { "node": ">=20" }
+}

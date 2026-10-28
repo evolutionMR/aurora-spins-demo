@@ -1,0 +1,52 @@
+/* Aurora Spins brand tokens. Change colours here, not in individual rules. */
+:root {
+  --bg: #0F2A24;
+  --surface: #1B4239;
+  --line: #2E5A4F;
+  --accent: #E7B85A;
+  --on-accent: #1A1408;
+  --text: #F3EEDF;
+  --muted: #C3D0C9;
+  --radius: 16px;
+  --font-head: 'DM Serif Display', Georgia, serif;
+  --font-body: Inter, system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-body); line-height: 1.5; }
+a { color: inherit; }
+
+.demo-note { background: var(--accent); color: var(--on-accent); font-size: 13px; font-weight: 600; text-align: center; padding: 6px 12px; }
+
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px; max-width: 1080px; margin: 0 auto; }
+.brand { font-family: var(--font-head); font-size: 26px; text-decoration: none; }
+.top nav { display: flex; gap: 4px; }
+.top nav a { text-decoration: none; padding: 10px 12px; min-height: 44px; display: inline-flex; align-items: center; border-radius: 10px; color: var(--muted); }
+.top nav a:hover, .top nav a:focus-visible { color: var(--text); background: var(--surface); }
+.balance { background: var(--surface); border-radius: 999px; padding: 6px 14px; font-size: 14px; }
+
+main { max-width: 1080px; margin: 0 auto; padding: 0 20px 40px; display: flex; flex-direction: column; gap: 40px; }
+.section-title { font-family: var(--font-head); font-weight: 400; font-size: 28px; margin: 0 0 12px; }
+.muted { color: var(--muted); margin: 0 0 12px; }
+
+.promo { display: flex; flex-direction: column; gap: 6px; background: var(--accent); color: var(--on-accent); border-radius: 20px; padding: 24px; text-decoration: none; margin-bottom: 28px; }
+.promo-kicker { font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+.promo-title { font-family: var(--font-head); font-size: 34px; line-height: 1.1; }
+.promo-cta { align-self: flex-start; margin-top: 8px; background: var(--on-accent); color: var(--accent); border-radius: 999px; padding: 10px 18px; font-weight: 700; font-size: 14px; }
+
+.games { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.game { height: 120px; border-radius: 14px; background: var(--surface); display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px; }
+
+.card { background: var(--surface); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 14px; max-width: 520px; }
+.row { display: flex; justify-content: space-between; gap: 16px; }
+.bar { height: 10px; border-radius: 999px; background: var(--bg); border: 1px solid var(--muted); overflow: hidden; }
+.bar-fill { height: 100%; width: 0; background: var(--accent); transition: width 0.3s; }
+.btn { background: var(--accent); color: var(--on-accent); border: 0; border-radius: 12px; min-height: 48px; font: inherit; font-weight: 700; cursor: pointer; }
+.btn:disabled { opacity: 0.6; cursor: default; }
+.reward { margin: 0; font-weight: 700; color: var(--accent); }
+
+.rules { margin-top: 16px; max-width: 520px; color: var(--muted); font-size: 14px; }
+.rules h3 { color: var(--text); font-size: 13px; letter-spacing: 1px; text-transform: uppercase; margin: 0 0 6px; }
+.rules ul { margin: 0; padding-left: 18px; }
+
+.foot { text-align: center; color: var(--muted); font-size: 13px; padding: 24px; }
