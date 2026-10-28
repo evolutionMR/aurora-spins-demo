@@ -34,4 +34,6 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: '--max-turns 25 --allowedTools "Bash(npm test),Bash(npm run test)"'
+          # Claude may only edit the website files. It cannot change what `npm test` runs,
+          # the workflows, the server or its own house rules.
+          claude_args: '--max-turns 25 --allowedTools "Bash(npm test)" --disallowedTools "Edit(package.json),Write(package.json),Edit(scripts/**),Write(scripts/**),Edit(.github/**),Write(.github/**),Edit(server.js),Write(server.js),Edit(CLAUDE.md),Write(CLAUDE.md)"'
