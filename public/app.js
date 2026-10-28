@@ -19,4 +19,21 @@
       spins.textContent = '10';
     }
   });
+
+  // Demo-only bonus play-through. Each click moves it forward by 25%.
+  var playthrough = 0;
+  var ptButton = document.getElementById('playthrough-btn');
+  var ptText = document.getElementById('playthrough-text');
+  var ptFill = document.getElementById('playthrough-fill');
+  var ptBar = ptFill.parentElement;
+
+  ptButton.addEventListener('click', function () {
+    playthrough = Math.min(100, playthrough + 25);
+    ptText.textContent = playthrough + '%';
+    ptFill.style.width = playthrough + '%';
+    ptBar.setAttribute('aria-valuenow', String(playthrough));
+    if (playthrough === 100) {
+      ptButton.disabled = true;
+    }
+  });
 })();
