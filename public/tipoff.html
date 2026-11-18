@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tip-off offer | Aurora Spins (demo)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="demo-note" role="note">Demo site with a made-up brand. No real money, no real accounts.</div>
+
+  <header class="top">
+    <a class="brand" href="index.html">Aurora Spins</a>
+  </header>
+
+  <main class="tipoff">
+    <section aria-labelledby="tipoff-title">
+      <p class="promo-kicker">Basketball season tip-off</p>
+      <h1 id="tipoff-title" class="tipoff-title">Tip-off is here. Start the season with a bonus.</h1>
+      <p id="tipoff-state" class="tipoff-state" aria-live="polite">Not available in your state</p>
+
+      <div id="tipoff-offer" class="card tipoff-offer" hidden>
+        <span class="muted">Welcome offer</span>
+        <strong class="tipoff-amount">€[0.00]</strong>
+        <button id="claim" class="btn tipoff-btn" type="button">Claim offer</button>
+        <p id="claim-note" class="reward" hidden>This is a demo. Nothing was claimed.</p>
+      </div>
+
+      <ul class="tipoff-reasons">
+        <li>Simple sign-up.</li>
+        <li>Fun games every day.</li>
+        <li>Missions with free spins.</li>
+      </ul>
+
+      <p class="tipoff-legal">21+ only. Gambling problem? Call 1-800-GAMBLER.</p>
+    </section>
+  </main>
+
+  <footer class="foot">Aurora Spins is a made-up brand for an AI Builder demo.</footer>
+  <script src="tipoff.js"></script>
+</body>
+</html>
