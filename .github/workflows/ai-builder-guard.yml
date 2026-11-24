@@ -1,0 +1,35 @@
+# AI Builder guard: a change from Claude may not edit the checks that judge it.
+# If a claude/ branch touches the workflows, Claude's settings (.claude/, .mcp.json), REVIEW.md, CODEOWNERS,
+# the house rules or what the tests run (package.json, .npmrc, the site's test scripts), this check fails.
+# Changes to those files go through a normal pull request from a person.
+name: AI Builder guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  guard:
+    if: startsWith(github.head_ref, 'claude/')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      # Files a Claude change may never touch: the checks, Claude's settings, the house rules and
+      # anything that decides what the tests run. Add the site's own test scripts and server here.
+      PROTECTED: '^(\.github/|\.claude/|\.mcp\.json$|REVIEW\.md$|CODEOWNERS$|docs/CODEOWNERS$|CLAUDE\.md$|package\.json$|package-lock\.json$|\.npmrc$|node_modules/|scripts/|server\.js$)'
+    steps:
+      - name: Check which files changed
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > files.txt
+          if grep -E "$PROTECTED" files.txt; then
+            echo "::error::This change edits a file that judges changes (listed above). Claude must undo that part."
+            exit 1
+          fi
+          echo "No protected files changed."
