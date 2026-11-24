@@ -7,10 +7,13 @@ const crypto = require('crypto');
 
 const root = path.join(__dirname, 'public');
 
-// Previews (Railway pull request copies, named like "aurora-spins-demo-pr-5") are password protected:
-// a preview can show work that is not approved yet. The live site is never affected.
-// Set PREVIEW_PASSWORD in Railway. Without it, a preview stays locked rather than open.
-const isPreview = /-pr-\d+$/.test(process.env.RAILWAY_ENVIRONMENT_NAME || '');
+// Every copy of the site on Railway except the live one (previews of changes that are not approved
+// yet) asks for a password. Locked by default: only the live environment is open, so a preview can
+// never be public by accident. Set PREVIEW_PASSWORD in Railway; without it, previews stay locked.
+// LIVE_ENVIRONMENT is the live environment's name in Railway ("production" unless set).
+// Local runs (no Railway) are not affected.
+const envName = (process.env.RAILWAY_ENVIRONMENT_NAME || '').trim();
+const isPreview = !!envName && envName !== (process.env.LIVE_ENVIRONMENT || 'production').trim();
 const previewPassword = process.env.PREVIEW_PASSWORD || '';
 function samePassword(given) {
   const a = crypto.createHash('sha256').update(String(given)).digest();
@@ -20,7 +23,7 @@ function samePassword(given) {
 function previewAllowed(req, res) {
   if (!isPreview) return true;
   if (!previewPassword) {
-    res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end('This preview is locked. Ask an admin to set PREVIEW_PASSWORD for previews in Railway.');
     return false;
   }
@@ -28,7 +31,7 @@ function previewAllowed(req, res) {
   const decoded = m ? Buffer.from(m[1], 'base64').toString('utf8') : '';
   const given = decoded.slice(decoded.indexOf(':') + 1);
   if (m && decoded.includes(':') && samePassword(given)) return true;
-  res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Aurora Spins preview", charset="UTF-8"', 'Content-Type': 'text/plain; charset=utf-8' });
+  res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Aurora Spins preview", charset="UTF-8"', 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end('This preview needs the preview password.');
   return false;
 }
