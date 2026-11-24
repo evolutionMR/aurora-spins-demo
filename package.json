@@ -5,7 +5,8 @@
   "description": "Made-up casino player site used to demo the AI Builder.",
   "scripts": {
     "start": "node server.js",
-    "test": "node scripts/check.js"
+    "test": "node scripts/check.js",
+    "verify": "node scripts/verify.js"
   },
   "engines": { "node": ">=20" }
 }

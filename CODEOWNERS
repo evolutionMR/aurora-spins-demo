@@ -1,0 +1,9 @@
+# The checks that judge every change. A person must approve changes to these.
+# (GitHub only enforces this with branch protection, which needs a paid plan on a private repo.)
+/.github/ @evolutionMR
+/.claude/ @evolutionMR
+/scripts/ @evolutionMR
+/REVIEW.md @evolutionMR
+/CLAUDE.md @evolutionMR
+/CODEOWNERS @evolutionMR
+/package.json @evolutionMR

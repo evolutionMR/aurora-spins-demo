@@ -31,9 +31,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # Lets the verify step check pages at phone and laptop size (pinned version).
+      - run: npm i --no-save playwright@1.48.2 && npx playwright install --with-deps chromium
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Save through Claude's GitHub app, so every fix starts the tests and the review again.
+          # (Pushes made as github-actions[bot] start no checks: that made "Checks are running" stick.)
+          use_commit_signing: true
           # Claude may only edit the website files. It cannot change what `npm test` runs,
           # the workflows, the server or its own house rules.
-          claude_args: '--max-turns 25 --allowedTools "Bash(npm test)" --disallowedTools "Edit(package.json),Write(package.json),Edit(scripts/**),Write(scripts/**),Edit(.github/**),Write(.github/**),Edit(server.js),Write(server.js),Edit(CLAUDE.md),Write(CLAUDE.md)"'
+          # It may run the tests and the verify step (start the site and check pages), and never edit
+          # the checks that judge it: REVIEW.md, its skills and settings in .claude/, .mcp.json, CODEOWNERS.
+          claude_args: '--max-turns 30 --permission-mode acceptEdits --allowedTools "Bash(npm test),Bash(npm run verify:*)" --disallowedTools "Edit(package.json),Write(package.json),Edit(scripts/**),Write(scripts/**),Edit(.github/**),Write(.github/**),Edit(server.js),Write(server.js),Edit(CLAUDE.md),Write(CLAUDE.md),Edit(REVIEW.md),Write(REVIEW.md),Edit(.claude/**),Write(.claude/**),Edit(.mcp.json),Write(.mcp.json),Edit(CODEOWNERS),Write(CODEOWNERS),Edit(package-lock.json),Write(package-lock.json),Edit(.npmrc),Write(.npmrc),Edit(.git/**),Write(.git/**),Edit(node_modules/**),Write(node_modules/**)"'
