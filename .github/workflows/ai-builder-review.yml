@@ -32,7 +32,7 @@ jobs:
       SHA: ${{ github.event.pull_request.head.sha }}
       BASE: ${{ github.event.pull_request.base.ref }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0

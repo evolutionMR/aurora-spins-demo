@@ -165,7 +165,7 @@ jobs:
           echo "try=$next" >> "$GITHUB_OUTPUT"
 
       - if: steps.count.outputs.go == 'yes'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ matrix.job.branch }}
           fetch-depth: 0
