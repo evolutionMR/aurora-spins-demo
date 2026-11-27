@@ -4,6 +4,7 @@
 #   (the same labels Claude Code's /code-review uses).
 # - Fails the "review" check when it finds an Important problem, so the AI Builder fixer picks it up.
 # - Only the newest version counts: a new push cancels a review that is still running.
+# - A pull request from a fork fails the "review" check (it is never skipped, so it never passes).
 #
 # THREAT MODEL. The change, its task and every comment may hold text written to trick an AI. So:
 # - "ai" (Claude): a READ-ONLY token, no id-token, no secret but the Claude key. Tools: Read, Glob,
@@ -125,8 +126,10 @@ jobs:
           set -euo pipefail
           out="$RUNNER_TEMP/change"
           if [ ! -f "$RUNNER_TEMP/git-config.before" ]; then mkdir -p "$out"; printf '%s\n' "${OUTCOME:-skipped}" > "$out/outcome"; exit 0; fi
-          cp "$RUNNER_TEMP/git-config.before" .git/config
-          if ! KIT_JSON="$RUNNER_TEMP/kit/kit.json" bash "$RUNNER_TEMP/kit/kit-change.sh" pack review "$out" 2> "$RUNNER_TEMP/refused.txt"; then
+          kit="$RUNNER_TEMP/kit"
+          export KIT_JSON="$kit/kit.json"
+          # settle: the git settings and the files the Claude action resets go back first.
+          if ! { bash "$kit/kit-change.sh" settle review "$RUNNER_TEMP/git-config.before" && bash "$kit/kit-change.sh" pack review "$out"; } 2> "$RUNNER_TEMP/refused.txt"; then
             cat "$RUNNER_TEMP/refused.txt" >&2; rm -rf "$out"; mkdir -p "$out"; cp "$RUNNER_TEMP/refused.txt" "$out/refused.txt"
           fi
           printf '%s\n' "${OUTCOME:-skipped}" > "$out/outcome"
@@ -139,9 +142,11 @@ jobs:
           if-no-files-found: error
 
   # The required check. No AI, no Claude key: posts the review and fails on an Important problem.
+  # It always runs, so it can never be "skipped" (a skipped required check counts as passed):
+  # on a pull request from a fork, where the AI review never runs, it fails with a plain message.
   review:
     needs: ai
-    if: always() && github.event.pull_request.head.repo.full_name == github.repository
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -156,6 +161,11 @@ jobs:
       KIT_REF: ${{ github.event.repository.default_branch }}
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: A pull request from a fork is not reviewed by AI
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          echo "::error::This change comes from a copy of the repo (a fork). The AI review never runs on those, so this check fails on purpose. An engineer must review it by hand, or push the branch to this repo."
+          exit 1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         continue-on-error: true
         with:

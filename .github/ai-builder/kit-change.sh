@@ -1,24 +1,37 @@
 #!/usr/bin/env bash
-# The change Claude made, as a patch. Used by the AI Builder workflows (claude.yml, the fixer).
-# Only the workflow runs this, never Claude (Claude has no Bash). Each job runs its OWN copy, taken
-# from the commit the workflow runs on (the default branch) into $RUNNER_TEMP before Claude starts,
-# never a copy from a working tree Claude has written in.
+# The change Claude made, as a patch. Used by the AI Builder workflows (claude.yml, the fixer, the
+# review and the guard). Only the workflow runs this, never Claude (Claude has no Bash). Each job runs
+# its OWN copy, taken from the commit the workflow runs on (the default branch) into $RUNNER_TEMP
+# before Claude starts, never a copy from a working tree Claude has written in.
 #
-#   kit-change.sh rules <plan|change|review>          the Edit rules Claude is allowed (one line, comma separated)
-#   kit-change.sh pack  <plan|change|review> <out>    in the Claude job's working copy, after Claude stopped
-#   kit-change.sh apply change <patch file>           in a clean checkout of the same commit
+#   kit-change.sh rules  <plan|change|review>          the Edit rules Claude is allowed (one line, comma separated)
+#   kit-change.sh settle <plan|change|review> <saved>  after Claude stopped, before pack (see below)
+#   kit-change.sh pack   <plan|change|review> <out>    in the Claude job's working copy, after settle
+#   kit-change.sh apply  change <patch file>           in a clean checkout of the same commit
+#   kit-change.sh guard  <file with one path per line> prints the protected paths in it; fails if any
 #
 # Needs KIT_JSON: the path of the trusted copy of .github/ai-builder/kit.json. Its "editable" list
 # names what Claude may change: "public/" (a folder, everything under it) or "index.html" (one file).
+# Its "guard" list names extra files no change may touch (the site's test scripts, its server).
 #
+# settle: <saved> is the copy of .git/config made before Claude started. If .git/config changed in
+#        any way but the Claude action's own lines (git user, origin URL, the checkout's auth header,
+#        the action's credential helper), it refuses. Then it puts the saved copy back, and puts back
+#        the files the Claude action itself resets from the base branch on pull requests (.claude/,
+#        CLAUDE.md, AGENTS.md, .mcp.json, .npmrc, package.json and so on: ACTION_PATHS below) to
+#        what this commit has, and removes the action's .claude-pr/ copy. Claude may never change
+#        those files anyway, so nothing of Claude's is lost.
 # pack:  stages everything in the working copy, refuses ANY path outside the allow list, and writes
 #        <out>/change.patch (the site change only), <out>/changed.txt and <out>/notes/ (Claude's
 #        plan.md, summary.md, verify.txt or review.md, kept apart from the patch).
 # apply: applies a patch with git apply --index and checks the result again with the same list.
+# guard: the one list of protected paths, also used by the guard workflow and the fixer.
 #
-# Never, whatever kit.json says: .github/, .claude/, .mcp.json, CLAUDE.md, REVIEW.md, CODEOWNERS,
-# package files, .npmrc, node_modules/, .gitattributes, .gitmodules, .gitignore, any path with a .git
-# folder in it, links, submodules, files that can be run (only mode 100644), more than 40 files,
+# Never, whatever kit.json says, at any depth and in any letter case: .github/, .claude/, .husky/,
+# node_modules/, CLAUDE.md, CLAUDE.local.md, AGENTS.md, .mcp.json, .claude.json, .ripgreprc,
+# REVIEW.md, CODEOWNERS, package files and lock files, .npmrc, .yarnrc, bunfig.toml, .gitattributes,
+# .gitmodules, .gitignore, any path with a .git folder in it; .ai-builder/ at the top; the "guard"
+# list. Also never links, submodules, files that can be run (only mode 100644), more than 40 files,
 # a file over 1 MB or a patch over 4 MB. Anything refused stops the whole change: nothing is half saved.
 set -euo pipefail
 export LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
@@ -27,18 +40,31 @@ MAX_FILES=40 MAX_FILE=1048576 MAX_PATCH=4194304 MAX_NOTE=60000
 NOTES=.ai-builder/run
 
 die() { echo "::error::$*" >&2; exit 1; }
-CMD="${1:-}"; MODE="${2:-}"; ARG="${3:-}"
+CMD="${1:-}"
+if [ "$CMD" = guard ]; then MODE=change; ARG="${2:-}"; else MODE="${2:-}"; ARG="${3:-}"; fi
 [[ "$MODE" == plan || "$MODE" == change || "$MODE" == review ]] || die "The mode must be plan, change or review."
 
 # ---------- What Claude may change (from kit.json) ----------
 [ -f "${KIT_JSON:-}" ] || die "No kit.json (KIT_JSON)."
-# A path no change may touch, in any mode, in any folder (any case for .git).
+# The site's own extra protected paths, from kit.json ("guard"): "scripts/" (a folder) or "server.js".
+GUARD=()
+while IFS= read -r e; do
+  [ -n "$e" ] || continue
+  [[ "$e" =~ ^[A-Za-z0-9_][A-Za-z0-9_./-]{0,150}$ && "$e" != *..* ]] || die "kit.json: guard entry \"$e\" is not a plain path."
+  GUARD+=("${e,,}")
+done < <(jq -r '(.guard // []) | if type == "array" then .[] else error("guard must be a list") end | tostring' "$KIT_JSON")
+# A path no change may touch, in any mode, at any depth, in any letter case (the same list for the
+# guard workflow, the fixer and the build: see the top of this file).
 protected() {
-  local p="/${1}/" l="/${1,,}/"
+  local l="/${1,,}/" e
   [[ "$l" == */.git/* ]] && return 0
-  [[ "$p" =~ /(\.github|\.claude|node_modules)/ ]] && return 0
-  [[ "$p" =~ /(CLAUDE\.md|CLAUDE\.local\.md|\.mcp\.json|REVIEW\.md|CODEOWNERS|package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|\.npmrc|\.yarnrc|\.yarnrc\.yml|\.gitattributes|\.gitmodules|\.gitignore)/$ ]] && return 0
-  [[ "$1" == .ai-builder || "$1" == .ai-builder/* ]] && return 0
+  [[ "$l" =~ /(\.github|\.claude|\.husky|node_modules)/ ]] && return 0
+  [[ "$l" =~ /(claude\.md|claude\.local\.md|agents\.md|\.mcp\.json|\.claude\.json|\.ripgreprc|review\.md|codeowners|package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|bunfig\.toml|\.npmrc|\.yarnrc|\.yarnrc\.yml|\.gitattributes|\.gitmodules|\.gitignore)/$ ]] && return 0
+  [[ "$l" == /.ai-builder/* ]] && return 0
+  for e in "${GUARD[@]}"; do
+    if [[ "$e" == */ ]]; then [[ "${l#/}" == "$e"* ]] && return 0
+    else [[ "$l" == "/$e/" ]] && return 0; fi
+  done
   return 1
 }
 EDITABLE=()
@@ -85,7 +111,63 @@ if [ "$CMD" = rules ]; then
   exit 0
 fi
 
+if [ "$CMD" = guard ]; then
+  [ -f "$ARG" ] && [ ! -L "$ARG" ] || die "No list of files."
+  found=0
+  while IFS= read -r p || [ -n "$p" ]; do
+    p="${p%$'\r'}"
+    [ -n "$p" ] || continue
+    if protected "$p"; then
+      found=$((found + 1))
+      [ "$found" -le 20 ] && printf '%s\n' "$p"
+    fi
+  done < "$ARG"
+  [ "$found" -eq 0 ]
+  exit
+fi
+
 "${G[@]}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "Not in a git working copy."
+
+# ---------- settle: the git settings, and the files the Claude action resets ----------
+# The Claude action (anthropics/claude-code-action v1.0.290) on a pull request deletes these and puts
+# back the base branch's version (src/github/operations/restore-config.ts SENSITIVE_PATHS); for a
+# pull request a bot opened, also the npm and Bun settings (tool-config.ts: in any folder, and only
+# the command fields of package.json). It leaves them changed in the working copy.
+ACTION_PATHS=(.claude .mcp.json .claude.json .gitmodules .ripgreprc CLAUDE.md CLAUDE.local.md AGENTS.md .husky .npmrc bunfig.toml node_modules package.json)
+# What the action itself writes to .git/config (src/github/operations/git-config.ts): the git user,
+# the origin URL (with or without a token), the checkout's auth header it removes, and the
+# credential helper it adds when allowed_bots is set. As `git config --list` prints them.
+ACTION_CONFIG='^(user\.name|user\.email|remote\.origin\.url|http\.https://github\.com/\.extraheader|credential\.https://github\.com\.helper)='
+# Puts one path back to what HEAD has (or removes it, when HEAD has none), if it differs.
+back() {
+  local p="$1"
+  [ -n "$("${G[@]}" --literal-pathspecs status --porcelain --untracked-files=all --ignored=no -- "$p" 2>/dev/null)" ] || return 0
+  rm -rf -- "$p"
+  if "${G[@]}" cat-file -e "HEAD:$p" 2>/dev/null; then "${G[@]}" --literal-pathspecs checkout -q HEAD -- "$p"; fi
+  echo "Put back as this commit has it (the Claude action had reset it): $p"
+}
+settle() {
+  local saved="$1" old new other p
+  [ -f "$saved" ] && [ ! -L "$saved" ] || die "No saved copy of the git settings."
+  [ -f .git/config ] && [ ! -L .git/config ] || die "Refused: the git settings (.git/config) changed while Claude worked"
+  if ! cmp -s "$saved" .git/config; then
+    old=$(git config --file "$saved" --list) || die "The saved git settings could not be read."
+    new=$(git config --file .git/config --list 2>/dev/null) || die "Refused: the git settings (.git/config) changed while Claude worked"
+    other=$(diff <(printf '%s\n' "$old" | sort) <(printf '%s\n' "$new" | sort) | sed -n 's/^[<>] //p' | grep -viE "$ACTION_CONFIG" || true)
+    [ -z "$other" ] || die "Refused: the git settings (.git/config) changed while Claude worked"
+  fi
+  cp "$saved" .git/config
+  for p in "${ACTION_PATHS[@]}"; do back "$p"; done
+  # The same names in folders below (npm and Bun read them there too), when anything changed them.
+  while IFS= read -r -d '' p; do
+    case "/$p" in
+      */node_modules/*) p="/$p"; p="${p%%/node_modules/*}"; p="${p#/}"; back "${p:+$p/}node_modules" ;;
+      */.npmrc|*/bunfig.toml|*/package.json) back "$p" ;;
+    esac
+  done < <("${G[@]}" diff --name-only -z HEAD -- 2>/dev/null; "${G[@]}" ls-files -z --others --exclude-standard 2>/dev/null)
+  rm -rf .claude-pr
+}
+if [ "$CMD" = settle ]; then settle "$ARG"; exit 0; fi
 
 # Checks the staged change against HEAD. $1 = notes allowed (yes|no). Prints the site paths that changed.
 check_staged() {
@@ -160,5 +242,5 @@ case "$CMD" in
     fi
     check_staged no
     ;;
-  *) die "Usage: kit-change.sh rules|pack|apply <plan|change|review> [folder|patch]" ;;
+  *) die "Usage: kit-change.sh rules|settle|pack|apply <plan|change|review> [saved|folder|patch], or guard <file>" ;;
 esac

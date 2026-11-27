@@ -13,7 +13,7 @@ Every workflow starts with a short threat model. In short: Claude runs only in r
 - `.github/workflows/ai-builder-review.yml`: one AI review per new version, findings marked Important / Pre-existing / Nit; the `review` check fails on Important.
 - `.github/workflows/ai-builder-fixer.yml`: Claude fixes failing checks and important review findings by itself (3 tries, then `needs-a-person`).
 - `.github/workflows/ai-builder-guard.yml`: a Claude change may not edit the checks, Claude's settings, the house rules, the test scripts or the server.
-- `.github/ai-builder/`: the scripts these workflows run, and `kit.json` (what Claude may change: `public/`).
+- `.github/ai-builder/`: the scripts these workflows run, and `kit.json` (what Claude may change: `public/`; the AI Builder's GitHub account, `evolutionMR`, whose bet card picks are the only ones that count). The site's tests run in the workflows as a separate user with no sudo and a clean environment; their `Verified:` line is a hint, and the `test` and `review` checks are the real gate.
 
 The review rules are in [REVIEW.md](./REVIEW.md); how Claude agrees and tests "done" is in `.claude/skills/`. `npm run verify -- / "Popular games"` starts the site and checks pages.
 

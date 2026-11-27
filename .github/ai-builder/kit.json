@@ -1,6 +1,7 @@
 {
   "editable": ["public/"],
   "guard": ["scripts/", "server.js"],
+  "ai_builder_account": "evolutionMR",
   "install": "",
   "test": "npm test",
   "verify": "npm run verify --",

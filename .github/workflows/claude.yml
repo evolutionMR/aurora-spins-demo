@@ -6,7 +6,9 @@
 # read the Claude key, the GitHub token or any other secret; change .github/, .claude/, .mcp.json,
 # CLAUDE.md, REVIEW.md, CODEOWNERS or package files; or use the network beyond the Claude API.
 # - "check" (no AI): only a person with write access to this repo can start a run (bots never can).
-#   It picks the mode and the branch, and posts "Claude is working on it" as the workflow.
+#   It picks the mode and the branch, and posts "Claude is working on it" as the workflow. A bet card
+#   pick written on GitHub counts only from the AI Builder's own account (kit.json "ai_builder_account"),
+#   which checked who may pick first; on a bet card task, no other comment starts a build.
 # - "claude": a READ-ONLY token (contents, issues and pull requests: read), no id-token, no secret
 #   but the Claude key. Claude has only the tools in --tools (Read, Glob, Grep, Edit, Write: no Bash,
 #   no web, no MCP), and --permission-mode dontAsk refuses every call no allow rule covers: it may
@@ -17,8 +19,10 @@
 #   comment is ever put into a shell command or into Claude's prompt (only through env variables).
 #   After Claude stops, the workflow packs the change as a patch: ANY other path stops the run.
 # - "test" (no AI, no secret, read only): applies the patch to a clean checkout and runs the site's
-#   tests and verify step from kit.json. The site's tests may run code Claude wrote, so this job holds
-#   nothing worth stealing; the required checks on the pull request are the real gate.
+#   tests and verify step from kit.json as a separate user with no sudo, in its own copy, with a clean
+#   environment (no Actions runtime token, no GitHub token). The site's tests may run code Claude
+#   wrote, so this job holds nothing worth stealing, and nothing runs after them that their code could
+#   change. Their result is a hint; the required checks on the pull request are the real gate.
 # - "save" (no AI, no Claude key): checks the patch again on a clean clone, commits it to a NEW
 #   claude/issue-<task>-<time> branch (or, for feedback, onto the pull request's own claude/ branch,
 #   only if it has not moved; never a force push, never main), opens the pull request and posts the
@@ -39,11 +43,6 @@ on:
     types: [created]
 
 permissions: {}
-
-# One run at a time per task or pull request; a new one waits for the old one.
-concurrency:
-  group: ai-builder-build-${{ github.event.issue.number || github.event.pull_request.number }}
-  cancel-in-progress: false
 
 jobs:
   check:
@@ -81,11 +80,14 @@ jobs:
           ISSUE_BODY: ${{ github.event.issue.body }}
           COMMENT_BODY: ${{ github.event.comment.body }}
           COMMENT_ID: ${{ github.event.comment.id }}
+          COMMENT_USER: ${{ github.event.comment.user.login }}
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
           no() { echo "$1"; echo "go=no" >> "$GITHUB_OUTPUT"; exit 0; }
           mention='(^|[^A-Za-z0-9_])@claude([^A-Za-z0-9_-]|$)'
+          # Line endings from GitHub may be CRLF: the exact-line checks below work on LF only.
+          ISSUE_BODY=$(printf '%s' "$ISSUE_BODY" | tr -d '\r'); COMMENT_BODY=$(printf '%s' "$COMMENT_BODY" | tr -d '\r')
           if [ "$EVENT" = issues ]; then text="$ISSUE_BODY"; else text="$COMMENT_BODY"; fi
           grep -qE "$mention" <<<"$text" || no "No @claude mention."
           [[ "$ACTOR" =~ ^[A-Za-z0-9-]{1,39}$ ]] || no "Not a person's account: $ACTOR"
@@ -94,12 +96,26 @@ jobs:
 
           kit_sha=$(gh api "repos/$REPO/commits/$DEFAULT_BRANCH" --jq '.sha')
           [[ "$kit_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Could not read the default branch."; exit 1; }
+          # kit.json (what Claude may edit, the AI Builder's account) and the protected list, from the default branch.
+          kit="$RUNNER_TEMP/kit"; mkdir -p "$kit"
+          for f in kit.json kit-change.sh; do
+            gh api "repos/$REPO/contents/.github/ai-builder/$f?ref=$kit_sha" -H 'Accept: application/vnd.github.raw' > "$kit/$f"
+          done
+          export KIT_JSON="$kit/kit.json"
           option=""; pr=""; issue=""; branch=""; sha="$kit_sha"; target=""
           if [ "$EVENT" = issues ] || { [ "$EVENT" = issue_comment ] && [ "$ON_PR" = no ]; }; then
             issue="$ISSUE_NUMBER"; target="$issue"
+            plan_task=no; grep -qxF '<!-- ai-builder-mode plan -->' <<<"$ISSUE_BODY" && plan_task=yes
             pick=$(grep -m1 -oE '^<!-- ai-builder-pick [A-C] -->$' <<<"$COMMENT_BODY" | sed -E 's/.* ([A-C]) .*/\1/' || true)
-            if [ -n "$pick" ]; then mode=build; option="$pick"
-            elif grep -qxF '<!-- ai-builder-mode plan -->' <<<"$ISSUE_BODY"; then mode=plan
+            if [ -n "$pick" ]; then
+              # A pick counts only from the AI Builder's own account, which checked who may pick
+              # (the company's bet card setting) before it wrote the pick.
+              app=$(jq -r '.ai_builder_account // "" | tostring' "$KIT_JSON")
+              [[ "$app" =~ ^[A-Za-z0-9-]{1,39}$ ]] || no "kit.json names no AI Builder account (ai_builder_account), so a pick written on GitHub is not trusted."
+              [ "${COMMENT_USER,,}" = "${app,,}" ] || no "A pick counts only when the AI Builder writes it. Pick an option in AI Builder."
+              mode=build; option="$pick"
+            elif [ "$EVENT" = issues ] && [ "$plan_task" = yes ]; then mode=plan
+            elif [ "$plan_task" = yes ]; then no "This request uses the bet card: pick an option in AI Builder. A comment here does not start a build."
             else mode=build; fi
           else
             pr="${REVIEW_PR:-$ISSUE_NUMBER}"; target="$pr"; mode=update
@@ -110,20 +126,15 @@ jobs:
             branch=$(jq -r .b <<<"$info"); sha=$(jq -r .h <<<"$info")
             [[ "$branch" =~ ^claude/[A-Za-z0-9._/-]{1,150}$ && "$branch" != *..* ]] || no "Not a claude/ branch."
             [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || no "Bad commit."
-            # A branch that changed the checks or Claude's settings is a person's job first.
-            bad=$(gh api "repos/$REPO/compare/$kit_sha...$sha" --jq '.files[]? | .filename, (.previous_filename // empty)' \
-              | grep -E '^(\.github/|\.claude/|\.mcp\.json$|CLAUDE\.md$|REVIEW\.md$|CODEOWNERS$|docs/CODEOWNERS$|package\.json$|package-lock\.json$|\.npmrc$)' | head -3 || true)
-            [ -z "$bad" ] || no "This change edits protected files ($bad). A person must undo that first."
+            # A branch that changed the checks or Claude's settings is a person's job first (the guard's list).
+            gh api "repos/$REPO/compare/$kit_sha...$sha" --jq '.files[]? | .filename, (.previous_filename // empty)' > "$kit/files.txt"
+            bash "$kit/kit-change.sh" guard "$kit/files.txt" > /dev/null 2>&1 || no "This change edits protected files. A person must undo that first."
           fi
           [[ "$target" =~ ^[1-9][0-9]{0,8}$ ]] || { echo "::error::Bad number."; exit 1; }
           kind=change; [ "$mode" = plan ] && kind=plan
 
           # What Claude may edit, from kit.json on the default branch.
-          kit="$RUNNER_TEMP/kit"; mkdir -p "$kit"
-          for f in kit.json kit-change.sh; do
-            gh api "repos/$REPO/contents/.github/ai-builder/$f?ref=$kit_sha" -H 'Accept: application/vnd.github.raw' > "$kit/$f"
-          done
-          edit=$(KIT_JSON="$kit/kit.json" bash "$kit/kit-change.sh" rules "$kind")
+          edit=$(bash "$kit/kit-change.sh" rules "$kind")
 
           {
             echo "go=yes"; echo "mode=$mode"; echo "kind=$kind"; echo "issue=$issue"; echo "pr=$pr"
@@ -146,6 +157,11 @@ jobs:
     if: needs.check.outputs.go == 'yes'
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # One Claude run at a time per task or pull request; a new one waits for the old one. Set here,
+    # after the check, so comments that do not start Claude never take a place in the queue.
+    concurrency:
+      group: ai-builder-build-${{ needs.check.outputs.issue || needs.check.outputs.pr }}
+      cancel-in-progress: false
     permissions:
       contents: read
       issues: read
@@ -180,7 +196,6 @@ jobs:
           bash "$kit/kit-context.sh" "$MODE"
           # Before Claude starts: a copy of .git/config and its hash, where Claude may not read or write.
           cp .git/config "$RUNNER_TEMP/git-config.before"
-          sha256sum < .git/config | cut -d' ' -f1 > "$RUNNER_TEMP/git-config.sha256"
 
       - id: claude
         name: Claude ${{ needs.check.outputs.mode == 'plan' && 'plans' || 'makes' }} the change
@@ -219,33 +234,21 @@ jobs:
             --disallowedTools "Bash,WebSearch,WebFetch,NotebookEdit,Task,Agent,mcp__*,Read(./.git/**),Read(//proc/**),Read(//sys/**),Read(//tmp/**),Read(//etc/**),Read(/${{ runner.temp }}/**),Read(/${{ runner.tool_cache }}/**),Read(//home/runner/work/_actions/**),Read(//home/runner/work/_temp/**),Read(//home/runner/runners/**),Read(//opt/**),Read(~/.claude/**),Read(~/.config/**),Read(~/.ssh/**),Read(~/.gitconfig),Read(~/.npmrc),Read(~/.git-credentials),Edit(./.git/**),Edit(./.github/**),Edit(./.claude/**),Edit(./.mcp.json),Edit(./CLAUDE.md),Edit(./REVIEW.md),Edit(./CODEOWNERS),Edit(./.npmrc),Edit(./package.json),Edit(./package-lock.json),Edit(./node_modules/**),Edit(./.ai-builder/run/request.md)"
 
       # Packed by the workflow after Claude has stopped, with kit-change.sh from the default branch.
-      # First .git/config: if it changed in any way but the action's own lines, nothing is kept.
+      # settle first: .git/config may differ only by the Claude action's own lines (else nothing is
+      # kept), and the files the action resets from the base branch go back to this commit's.
       - if: always()
         name: Pack the change (refuses any file outside the allow list)
         env:
           OUTCOME: ${{ steps.claude.outcome }}
         run: |
           set -euo pipefail
-          out="$RUNNER_TEMP/change"; before="$RUNNER_TEMP/git-config.before"; ok=yes
-          export KIT_JSON="$RUNNER_TEMP/kit/kit.json"
-          refuse() { echo "::error::$1" >&2; rm -rf "$out"; mkdir -p "$out"; printf '::error::%s\n' "$1" > "$out/refused.txt"; }
-          if [ ! -f "$before" ]; then
+          out="$RUNNER_TEMP/change"; kit="$RUNNER_TEMP/kit"
+          export KIT_JSON="$kit/kit.json"
+          if [ ! -f "$RUNNER_TEMP/git-config.before" ]; then
             echo "Claude did not start; nothing to pack."; mkdir -p "$out"; printf '%s\n' "${OUTCOME:-skipped}" > "$out/outcome"; exit 0
           fi
-          if [ -L .git/config ] || [ ! -f .git/config ]; then ok=no
-          elif [ "$(sha256sum < .git/config | cut -d' ' -f1)" != "$(cat "$RUNNER_TEMP/git-config.sha256")" ]; then
-            if ! old=$(git config --file "$before" --list) || ! new=$(git config --file .git/config --list); then ok=no
-            else
-              other=$(diff <(printf '%s\n' "$old" | sort) <(printf '%s\n' "$new" | sort) | sed -n 's/^[<>] //p' | grep -viE '^(user\.name|user\.email|remote\.origin\.url|http\.https://github\.com/\.extraheader)=' || true)
-              [ -z "$other" ] || ok=no
-            fi
-          fi
-          if [ "$ok" = no ]; then refuse "Refused: the git settings (.git/config) changed while Claude worked"
-          else
-            cp "$before" .git/config
-            if ! bash "$RUNNER_TEMP/kit/kit-change.sh" pack "$KIND" "$out" 2> "$RUNNER_TEMP/refused.txt"; then
-              cat "$RUNNER_TEMP/refused.txt" >&2; rm -rf "$out"; mkdir -p "$out"; cp "$RUNNER_TEMP/refused.txt" "$out/refused.txt"
-            fi
+          if ! { bash "$kit/kit-change.sh" settle "$KIND" "$RUNNER_TEMP/git-config.before" && bash "$kit/kit-change.sh" pack "$KIND" "$out"; } 2> "$RUNNER_TEMP/refused.txt"; then
+            cat "$RUNNER_TEMP/refused.txt" >&2; rm -rf "$out"; mkdir -p "$out"; cp "$RUNNER_TEMP/refused.txt" "$out/refused.txt"
           fi
           printf '%s\n' "${OUTCOME:-skipped}" > "$out/outcome"
           ls -la "$out"
@@ -257,7 +260,8 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
-  # The test job: no AI, no secrets, read only. The site's tests and verify step on a clean copy.
+  # The test job: no AI, no secrets, read only. The site's tests and verify step on a clean copy,
+  # as a separate user with no sudo and a clean environment. Its result is a hint, never the gate.
   test:
     needs: [check, claude]
     if: always() && needs.check.outputs.go == 'yes' && needs.check.outputs.kind == 'change'
@@ -284,6 +288,9 @@ jobs:
       - name: Run the site's tests and verify step on the changed copy
         env:
           GH_TOKEN: ${{ github.token }}
+          # The site's commands run as this separate user, with no sudo and a clean environment
+          # (kit-test.sh). This is the last step that runs anything; the upload only reads the results.
+          KIT_RUN_AS: ai-builder-site
         run: |
           set -euo pipefail
           export KIT="$RUNNER_TEMP/kit" KIT_JSON="$RUNNER_TEMP/kit/kit.json"; mkdir -p "$KIT"

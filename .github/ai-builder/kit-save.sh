@@ -37,15 +37,33 @@ num() { [[ "${1:-}" =~ ^[1-9][0-9]{0,8}$ ]]; }
 TMP="${RUNNER_TEMP:-/tmp}"
 BODY=$(mktemp "$TMP/ai-builder-comment.XXXXXX")
 WORK=""
-trap 'rm -rf "$BODY" ${WORK:+"$WORK" "$WORK.err"}' EXIT
+trap 'rm -rf "$BODY" "$BODY.plan" "$BODY.words" ${WORK:+"$WORK" "$WORK.err"}' EXIT
 
+# Every line break first: CR, and the ones that are not "\n" but still start a new line for some
+# readers (U+2028, U+2029, U+0085, vertical tab, form feed), so no line can hide inside another.
+LINES='gsub("\r\n?|[\u2028\u2029\u0085\u000b\u000c]"; "\n")'
 # Claude's words, quoted line by line, at most 20,000 characters.
 quoted() {
-  head -c 20000 "$1" | jq -Rrs 'gsub("\r\n?"; "\n") | gsub("<!--"; "&lt;!--") | gsub("@(?<a>[A-Za-z0-9])"; "@​\(.a)") | rtrimstr("\n") | split("\n") | map("> " + .) | join("\n")'
+  head -c 20000 "$1" | jq -Rrs "$LINES"' | gsub("<!--"; "&lt;!--") | gsub("@(?<a>[A-Za-z0-9])"; "@​\(.a)") | rtrimstr("\n") | split("\n") | map("> " + .) | join("\n")'
 }
 # A short line of plain words from a file (an error message), made harmless the same way.
-short() { head -c 300 "$1" | jq -Rrs 'gsub("[\r\n]+"; " ") | gsub("::error::"; "") | gsub("<!--"; "&lt;!--") | gsub("@(?<a>[A-Za-z0-9])"; "@​\(.a)") | rtrimstr(" ")'; }
-plain() { jq -Rrs 'gsub("<!--"; "&lt;!--") | gsub("@(?<a>[A-Za-z0-9])"; "@​\(.a)")'; }
+short() { head -c 300 "$1" | jq -Rrs "$LINES"' | gsub("\n+"; " ") | gsub("::error::"; "") | gsub("<!--"; "&lt;!--") | gsub("@(?<a>[A-Za-z0-9])"; "@​\(.a)") | rtrimstr(" ")'; }
+plain() { jq -Rrs "$LINES"' | gsub("<!--"; "&lt;!--") | gsub("@(?<a>[A-Za-z0-9])"; "@​\(.a)")'; }
+# A plan over 20,000 bytes keeps its bet card: the start of the plan, a note, then the "Bet card"
+# section from its last heading (at most 8,000 bytes). $1 = plan file, $2 = file to write.
+fit_plan() {
+  local size at card
+  size=$(stat -c%s "$1")
+  if [ "$size" -le 20000 ]; then cp "$1" "$2"; return; fi
+  at=$(grep -niE '^#{1,6}[[:space:]]*bet card[[:space:]]*$' "$1" | tail -1 | cut -d: -f1 || true)
+  if [ -z "$at" ]; then head -c 20000 "$1" > "$2"; return; fi
+  card=$(mktemp "$TMP/ai-builder-card.XXXXXX")
+  tail -n "+$at" "$1" | head -c 8000 > "$card"
+  { head -n "$((at - 1))" "$1" | head -c "$((19800 - $(stat -c%s "$card")))"
+    printf '\n\n[The plan was too long to show in full, so part of it was cut. The bet card below is complete.]\n\n'
+    cat "$card"; } > "$2"
+  rm -f "$card"
+}
 
 # Where the result goes: the task for plan and build, the pull request for the rest.
 case "$CMD" in
@@ -114,11 +132,13 @@ if [ "$CMD" = plan ]; then
   note="$IN/notes/plan.md"
   [ -f "$note" ] && [ ! -L "$note" ] && [ -s "$note" ] || { failed "Claude did not write a plan."; exit 0; }
   if [ -s "$IN/change.patch" ]; then failed "Claude changed files while planning, so nothing was kept."; exit 0; fi
+  fit_plan "$note" "$BODY.plan"
   { marker "done"
     echo "**Claude's plan for this change.** Claude could only read the website's code and write this note; the workflow posted it. Pick an option in AI Builder."
     echo
-    quoted "$note"
+    quoted "$BODY.plan"
   } > "$BODY"
+  rm -f "$BODY.plan"
   post
   exit 0
 fi
@@ -182,7 +202,7 @@ extra=$(g diff --cached --name-only | grep -v -x -F -f <(printf '%s\n' "$changed
 CHECK_RE='^- (✅|❌|⬜) [^<>@`]{1,300}$'
 verified="none (the tests did not run)"
 if [ -f "${TESTS:-/nonexistent}/verified.txt" ] && [ ! -L "$TESTS/verified.txt" ]; then
-  v=$(head -n1 "$TESTS/verified.txt" | tr -d '\r<>@`' | head -c 300)
+  v=$(head -n1 "$TESTS/verified.txt" | LC_ALL=C sed 's/\xe2\x80[\xa8\xa9]\|\xc2\x85//g' | tr -d '\r\v\f<>@`' | head -c 300)
   [ -n "$v" ] && verified="$v"
 fi
 case "$CMD" in
@@ -202,7 +222,9 @@ if [ "$CMD" = build ]; then
   if [ -z "$pr" ]; then
     gh api "repos/$REPO/issues/$ISSUE" > "$TMP/issue.json"
     ititle=$(jq -r '.title' "$TMP/issue.json" | tr -d '\r\n' | head -c 200 | plain)
-    request=$(jq -r '.body // ""' "$TMP/issue.json" | awk '/^<!-- request -->$/{on=1; next} /^<!-- \/request -->$/{on=0} on' | head -c 4000 | plain)
+    # The request as the AI Builder quoted it, quoted again line by line after the line breaks are
+    # made plain, so no part of it can stand as a line of its own in the pull request.
+    request=$(jq -r '.body // ""' "$TMP/issue.json" | tr -d '\r' | awk '/^<!-- request -->$/{on=1; next} /^<!-- \/request -->$/{on=0} on' | head -c 4000 | plain | sed -E 's/^> ?//; s/^/> /')
     settings=""; jq -r '.body // ""' "$TMP/issue.json" | grep -q '^\*\*Company settings (from the AI Builder)' && settings="Company settings were attached to this request. They are shown in full in the task (#$ISSUE)."
     jq -n --arg t "AI Builder: $ititle" --arg h "$BRANCH" --arg b "$BASE" \
       --arg body "$(printf 'Closes #%s\n\nRequested through the AI Builder. Built by Claude in a read-only job; checked and saved by the workflow.\n\n**What was asked:**\n\n%s\n\n%s' "$ISSUE" "$request" "$settings")" \
@@ -233,6 +255,8 @@ fi
   says
   echo
   echo "### Tests the workflow ran"
+  echo "A hint only: the site's own code ran these tests, in a locked-down job. The checks on the pull request, and the engineer, are the real gate."
+  echo
   if [ -f "${TESTS:-/nonexistent}/results.md" ] && [ ! -L "$TESTS/results.md" ] && grep -qE "$CHECK_RE" "$TESTS/results.md"; then
     grep -E "$CHECK_RE" "$TESTS/results.md" | head -14
   else
