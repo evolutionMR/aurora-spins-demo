@@ -7,14 +7,16 @@ A made-up casino player site used to demo the **AI Builder**: people who are not
 - House rules for Claude: [CLAUDE.md](./CLAUDE.md)
 
 ## Workflows
-- `.github/workflows/claude.yml`: Claude builds a change when an issue or comment mentions `@claude`. Its commits are saved through Claude's GitHub app (`use_commit_signing`), so every fix starts the checks again.
+Every workflow starts with a short threat model. In short: Claude runs only in read-only jobs (it can read the code and change files in `public/`, nothing else, and has no command line, web or secrets). Jobs with no AI test the change, save it on its own `claude/` branch and post the results. See the AI Builder's `site-kit/README.md`.
+- `.github/workflows/claude.yml`: Claude plans or builds a change when an issue or comment from someone with write access mentions `@claude`. A job with no AI opens the pull request.
 - `.github/workflows/ci.yml` ("Checks"): runs `npm test` on every pull request.
-- `.github/workflows/ai-builder-review.yml`: one AI review per new version, findings marked Important / Pre-existing / Nit; fails on Important.
+- `.github/workflows/ai-builder-review.yml`: one AI review per new version, findings marked Important / Pre-existing / Nit; the `review` check fails on Important.
 - `.github/workflows/ai-builder-fixer.yml`: Claude fixes failing checks and important review findings by itself (3 tries, then `needs-a-person`).
 - `.github/workflows/ai-builder-guard.yml`: a Claude change may not edit the checks, Claude's settings, the house rules, the test scripts or the server.
+- `.github/ai-builder/`: the scripts these workflows run, and `kit.json` (what Claude may change: `public/`; the AI Builder's GitHub account, `evolutionMR`, whose bet card picks are the only ones that count). The site's tests run in the workflows as a separate user with no sudo and a clean environment; their `Verified:` line is a hint, and the `test` and `review` checks are the real gate.
 
 The review rules are in [REVIEW.md](./REVIEW.md); how Claude agrees and tests "done" is in `.claude/skills/`. `npm run verify -- / "Popular games"` starts the site and checks pages.
 
 Needs the repository secret `CLAUDE_CODE_OAUTH_TOKEN` and the Claude GitHub App installed on this repo.
 
-**No branch protection:** this is a private repo on a free GitHub plan, so GitHub cannot force "only an engineer merges". The workflows never merge, but the real lock needs a paid plan or a public repo.
+**Branch protection:** this repo is public, and `main` needs a pull request with 1 approval from a code owner, plus the `test` and `review` checks. The workflows never approve or merge.
