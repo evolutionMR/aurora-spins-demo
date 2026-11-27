@@ -19,8 +19,8 @@
 #   reason, the failed log and the reviews reach it as a file the workflow wrote, marked as untrusted.
 #   It cannot push, comment, approve, merge, read secrets or change .github/, .claude/, .mcp.json,
 #   CLAUDE.md, REVIEW.md, CODEOWNERS or package files: the patch is refused if it touches them.
-# - "test" (no AI, no secret, read only) runs the site's tests on the fixed copy, as a separate user
-#   with no sudo and a clean environment (kit-test.sh). Its result is a hint, never the gate.
+# - "test" (no AI, no secret, read only) runs the site's tests on the fixed copy in a sandbox, as a
+#   separate user with no sudo and a clean environment (kit-test.sh). Its result is a hint, never the gate.
 # - "save" (no AI, no Claude key): applies the patch again on a clean clone and pushes it to the
 #   change's OWN claude/ branch, only if that branch has not moved (never main, never a force push),
 #   with Claude's GitHub app token so the checks run again; then posts what changed.
@@ -162,7 +162,14 @@ jobs:
           done
           export KIT_JSON="$kit/kit.json"
           # A branch that changed protected files is a person's job (the guard says the same, from the same list).
-          gh api "repos/$REPO/compare/$kit_sha...$SHA" --jq '.files[]? | .filename, (.previous_filename // empty)' > "$kit/files.txt"
+          # The compare API lists at most 300 files: at 300 or more, the list may be cut, so a person looks.
+          gh api "repos/$REPO/compare/$kit_sha...$SHA" > "$kit/compare.json"
+          if [ "$(jq '.files // [] | length' "$kit/compare.json")" -ge 300 ]; then
+            gh api -X POST "repos/$REPO/issues/$PR/labels" -f "labels[]=needs-a-person" >/dev/null
+            note "This change touches too many files to check (300 or more), so an engineer needs to look."
+            echo "go=no" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          jq -r '.files[]? | .filename, (.previous_filename // empty)' "$kit/compare.json" > "$kit/files.txt"
           if ! bad=$(bash "$kit/kit-change.sh" guard "$kit/files.txt" 2>&1); then
             # File names only as plain words (they come from the change).
             bad=$(printf '%s' "$bad" | head -3 | tr '\n' ' ' | sed 's/::error:://g' | tr -cd 'A-Za-z0-9._/ -' | cut -c1-200 | sed 's/ *$//')
@@ -295,7 +302,7 @@ jobs:
   test:
     needs: [find, claude]
     if: always() && needs.find.outputs.go == 'yes'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # systemd 254+ for the sandbox (kit-test.sh)
     timeout-minutes: 20
     permissions:
       contents: read
@@ -318,17 +325,21 @@ jobs:
       - name: Run the site's tests and verify step on the fixed copy
         env:
           GH_TOKEN: ${{ github.token }}
-          # The site's commands run as this separate user, with no sudo and a clean environment
-          # (kit-test.sh). This is the last step that runs anything; the upload only reads the results.
+          # The site's commands run in a sandbox as this separate user (kit-test.sh: a read-only
+          # system, no sudo, a clean environment). This is the last step that runs a command; the
+          # upload is a JavaScript action the runner starts with its own node, by full path.
           KIT_RUN_AS: ai-builder-site
         run: |
+          # Looked up before any of the site's code runs; from here on only root-owned system folders.
+          KIT_JOB_PATH="$PATH"; KIT_NODE="$(command -v node)"
+          export PATH=/usr/sbin:/usr/bin:/sbin:/bin KIT_JOB_PATH KIT_NODE
           set -euo pipefail
           export KIT="$RUNNER_TEMP/kit" KIT_JSON="$RUNNER_TEMP/kit/kit.json"; mkdir -p "$KIT"
           for f in kit.json kit-change.sh kit-test.sh; do
-            gh api "repos/$REPO/contents/.github/ai-builder/$f?ref=$KIT_SHA" -H 'Accept: application/vnd.github.raw' > "$KIT/$f"
+            /usr/bin/gh api "repos/$REPO/contents/.github/ai-builder/$f?ref=$KIT_SHA" -H 'Accept: application/vnd.github.raw' > "$KIT/$f"
           done
           unset GH_TOKEN
-          bash "$KIT/kit-test.sh" "$RUNNER_TEMP/in" "$RUNNER_TEMP/tests"
+          /usr/bin/bash "$KIT/kit-test.sh" "$RUNNER_TEMP/in" "$RUNNER_TEMP/tests"
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

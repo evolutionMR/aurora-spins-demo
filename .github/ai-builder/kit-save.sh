@@ -221,7 +221,8 @@ if [ "$CMD" = build ]; then
   pr=$(gh api "repos/$REPO/pulls?state=all&head=$owner:$BRANCH" --jq '.[0].number // empty' 2>/dev/null || true)
   if [ -z "$pr" ]; then
     gh api "repos/$REPO/issues/$ISSUE" > "$TMP/issue.json"
-    ititle=$(jq -r '.title' "$TMP/issue.json" | tr -d '\r\n' | head -c 200 | plain)
+    # One line: CR and LF go, then the other line breaks (U+2028, U+2029, U+0085, \v, \f) become spaces.
+    ititle=$(jq -r '.title' "$TMP/issue.json" | tr -d '\r\n' | LC_ALL=C sed 's/\xe2\x80[\xa8\xa9]/ /g; s/\xc2\x85/ /g' | tr '\v\f' '  ' | head -c 200 | plain)
     # The request as the AI Builder quoted it, quoted again line by line after the line breaks are
     # made plain, so no part of it can stand as a line of its own in the pull request.
     request=$(jq -r '.body // ""' "$TMP/issue.json" | tr -d '\r' | awk '/^<!-- request -->$/{on=1; next} /^<!-- \/request -->$/{on=0} on' | head -c 4000 | plain | sed -E 's/^> ?//; s/^/> /')

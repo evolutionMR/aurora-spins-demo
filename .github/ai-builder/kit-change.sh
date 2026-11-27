@@ -29,7 +29,7 @@
 #
 # Never, whatever kit.json says, at any depth and in any letter case: .github/, .claude/, .husky/,
 # node_modules/, CLAUDE.md, CLAUDE.local.md, AGENTS.md, .mcp.json, .claude.json, .ripgreprc,
-# REVIEW.md, CODEOWNERS, package files and lock files, .npmrc, .yarnrc, bunfig.toml, .gitattributes,
+# REVIEW.md, CODEOWNERS, package files and lock files, .npmrc, .yarnrc, .pnpmfile.cjs, bunfig.toml, .gitattributes,
 # .gitmodules, .gitignore, any path with a .git folder in it; .ai-builder/ at the top; the "guard"
 # list. Also never links, submodules, files that can be run (only mode 100644), more than 40 files,
 # a file over 1 MB or a patch over 4 MB. Anything refused stops the whole change: nothing is half saved.
@@ -59,7 +59,7 @@ protected() {
   local l="/${1,,}/" e
   [[ "$l" == */.git/* ]] && return 0
   [[ "$l" =~ /(\.github|\.claude|\.husky|node_modules)/ ]] && return 0
-  [[ "$l" =~ /(claude\.md|claude\.local\.md|agents\.md|\.mcp\.json|\.claude\.json|\.ripgreprc|review\.md|codeowners|package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|bunfig\.toml|\.npmrc|\.yarnrc|\.yarnrc\.yml|\.gitattributes|\.gitmodules|\.gitignore)/$ ]] && return 0
+  [[ "$l" =~ /(claude\.md|claude\.local\.md|agents\.md|\.mcp\.json|\.claude\.json|\.ripgreprc|review\.md|codeowners|package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|bunfig\.toml|\.npmrc|\.yarnrc|\.yarnrc\.yml|\.pnpmfile\.cjs|\.gitattributes|\.gitmodules|\.gitignore)/$ ]] && return 0
   [[ "$l" == /.ai-builder/* ]] && return 0
   for e in "${GUARD[@]}"; do
     if [[ "$e" == */ ]]; then [[ "${l#/}" == "$e"* ]] && return 0
@@ -136,7 +136,8 @@ fi
 ACTION_PATHS=(.claude .mcp.json .claude.json .gitmodules .ripgreprc CLAUDE.md CLAUDE.local.md AGENTS.md .husky .npmrc bunfig.toml node_modules package.json)
 # What the action itself writes to .git/config (src/github/operations/git-config.ts): the git user,
 # the origin URL (with or without a token), the checkout's auth header it removes, and the
-# credential helper it adds when allowed_bots is set. As `git config --list` prints them.
+# credential helper it adds when allowed_bots is set. As `git config --list` prints them: the exact
+# keys (letter case too), each with at most one value.
 ACTION_CONFIG='^(user\.name|user\.email|remote\.origin\.url|http\.https://github\.com/\.extraheader|credential\.https://github\.com\.helper)='
 # Puts one path back to what HEAD has (or removes it, when HEAD has none), if it differs.
 back() {
@@ -147,14 +148,16 @@ back() {
   echo "Put back as this commit has it (the Claude action had reset it): $p"
 }
 settle() {
-  local saved="$1" old new other p
+  local saved="$1" old new other twice p
   [ -f "$saved" ] && [ ! -L "$saved" ] || die "No saved copy of the git settings."
   [ -f .git/config ] && [ ! -L .git/config ] || die "Refused: the git settings (.git/config) changed while Claude worked"
   if ! cmp -s "$saved" .git/config; then
     old=$(git config --file "$saved" --list) || die "The saved git settings could not be read."
     new=$(git config --file .git/config --list 2>/dev/null) || die "Refused: the git settings (.git/config) changed while Claude worked"
-    other=$(diff <(printf '%s\n' "$old" | sort) <(printf '%s\n' "$new" | sort) | sed -n 's/^[<>] //p' | grep -viE "$ACTION_CONFIG" || true)
+    other=$(diff <(printf '%s\n' "$old" | sort) <(printf '%s\n' "$new" | sort) | sed -n 's/^[<>] //p' | grep -vE "$ACTION_CONFIG" || true)
     [ -z "$other" ] || die "Refused: the git settings (.git/config) changed while Claude worked"
+    twice=$(printf '%s\n' "$new" | grep -E "$ACTION_CONFIG" | cut -d= -f1 | sort | uniq -d || true)
+    [ -z "$twice" ] || die "Refused: the git settings (.git/config) changed while Claude worked"
   fi
   cp "$saved" .git/config
   for p in "${ACTION_PATHS[@]}"; do back "$p"; done

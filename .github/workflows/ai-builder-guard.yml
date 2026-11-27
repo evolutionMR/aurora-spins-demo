@@ -28,21 +28,26 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
-      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - name: Check which files changed
         run: |
           set -euo pipefail
           # The one list of files a Claude change may never touch (the checks, the kit, Claude's
           # settings, the house rules, what the tests run, at any depth and in any letter case, plus
-          # the site's own "guard" list in kit.json) lives in kit-change.sh. Both come from the main
-          # branch, never from the change.
+          # the site's own "guard" list in kit.json) lives in kit-change.sh. Both come from the repo's
+          # default branch (as the build and the fixer read them), never from the change or its base.
           kit="$RUNNER_TEMP/kit"; mkdir -p "$kit"
+          kit_sha=$(gh api "repos/$REPO/commits/$DEFAULT_BRANCH" --jq '.sha') || kit_sha=""
+          [[ "$kit_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Could not read the default branch, so this change cannot be checked."; exit 1; }
           for f in kit.json kit-change.sh; do
-            gh api "repos/$REPO/contents/.github/ai-builder/$f?ref=$BASE_SHA" -H 'Accept: application/vnd.github.raw' > "$kit/$f" \
+            gh api "repos/$REPO/contents/.github/ai-builder/$f?ref=$kit_sha" -H 'Accept: application/vnd.github.raw' > "$kit/$f" \
               || { echo "::error::Could not read the AI Builder kit from the main branch, so this change cannot be checked."; exit 1; }
           done
           gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > "$kit/files.txt"
+          # GitHub lists at most 3000 files of a pull request: at 3000 or more, the list may be cut.
+          [ "$(gh api "repos/$REPO/pulls/$PR" --jq '.changed_files')" -lt 3000 ] \
+            || { echo "::error::This change touches too many files to check (3000 or more). A person must split it."; exit 1; }
           if ! KIT_JSON="$kit/kit.json" bash "$kit/kit-change.sh" guard "$kit/files.txt"; then
             echo "::error::This change edits a file that judges changes (listed above). Claude must undo that part."
             exit 1

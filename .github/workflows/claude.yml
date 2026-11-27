@@ -19,10 +19,11 @@
 #   comment is ever put into a shell command or into Claude's prompt (only through env variables).
 #   After Claude stops, the workflow packs the change as a patch: ANY other path stops the run.
 # - "test" (no AI, no secret, read only): applies the patch to a clean checkout and runs the site's
-#   tests and verify step from kit.json as a separate user with no sudo, in its own copy, with a clean
-#   environment (no Actions runtime token, no GitHub token). The site's tests may run code Claude
-#   wrote, so this job holds nothing worth stealing, and nothing runs after them that their code could
-#   change. Their result is a hint; the required checks on the pull request are the real gate.
+#   tests and verify step from kit.json in a sandbox (a systemd unit with a read-only system) as a
+#   separate user with no sudo, in its own copy, with a clean environment (no Actions runtime token,
+#   no GitHub token). The site's tests may run code Claude wrote, so this job holds nothing worth
+#   stealing, the PATH folders are closed to that user first, and nothing runs after them that their
+#   code could change. Their result is a hint; the required checks on the pull request are the real gate.
 # - "save" (no AI, no Claude key): checks the patch again on a clean clone, commits it to a NEW
 #   claude/issue-<task>-<time> branch (or, for feedback, onto the pull request's own claude/ branch,
 #   only if it has not moved; never a force push, never main), opens the pull request and posts the
@@ -127,7 +128,10 @@ jobs:
             [[ "$branch" =~ ^claude/[A-Za-z0-9._/-]{1,150}$ && "$branch" != *..* ]] || no "Not a claude/ branch."
             [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || no "Bad commit."
             # A branch that changed the checks or Claude's settings is a person's job first (the guard's list).
-            gh api "repos/$REPO/compare/$kit_sha...$sha" --jq '.files[]? | .filename, (.previous_filename // empty)' > "$kit/files.txt"
+            # The compare API lists at most 300 files: at 300 or more, the list may be cut, so a person looks.
+            gh api "repos/$REPO/compare/$kit_sha...$sha" > "$kit/compare.json"
+            [ "$(jq '.files // [] | length' "$kit/compare.json")" -lt 300 ] || no "This change touches too many files to check (300 or more). A person must look first."
+            jq -r '.files[]? | .filename, (.previous_filename // empty)' "$kit/compare.json" > "$kit/files.txt"
             bash "$kit/kit-change.sh" guard "$kit/files.txt" > /dev/null 2>&1 || no "This change edits protected files. A person must undo that first."
           fi
           [[ "$target" =~ ^[1-9][0-9]{0,8}$ ]] || { echo "::error::Bad number."; exit 1; }
@@ -265,7 +269,7 @@ jobs:
   test:
     needs: [check, claude]
     if: always() && needs.check.outputs.go == 'yes' && needs.check.outputs.kind == 'change'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # systemd 254+ for the sandbox (kit-test.sh)
     timeout-minutes: 20
     permissions:
       contents: read
@@ -288,17 +292,21 @@ jobs:
       - name: Run the site's tests and verify step on the changed copy
         env:
           GH_TOKEN: ${{ github.token }}
-          # The site's commands run as this separate user, with no sudo and a clean environment
-          # (kit-test.sh). This is the last step that runs anything; the upload only reads the results.
+          # The site's commands run in a sandbox as this separate user (kit-test.sh: a read-only
+          # system, no sudo, a clean environment). This is the last step that runs a command; the
+          # upload is a JavaScript action the runner starts with its own node, by full path.
           KIT_RUN_AS: ai-builder-site
         run: |
+          # Looked up before any of the site's code runs; from here on only root-owned system folders.
+          KIT_JOB_PATH="$PATH"; KIT_NODE="$(command -v node)"
+          export PATH=/usr/sbin:/usr/bin:/sbin:/bin KIT_JOB_PATH KIT_NODE
           set -euo pipefail
           export KIT="$RUNNER_TEMP/kit" KIT_JSON="$RUNNER_TEMP/kit/kit.json"; mkdir -p "$KIT"
           for f in kit.json kit-change.sh kit-test.sh; do
-            gh api "repos/$REPO/contents/.github/ai-builder/$f?ref=$KIT_SHA" -H 'Accept: application/vnd.github.raw' > "$KIT/$f"
+            /usr/bin/gh api "repos/$REPO/contents/.github/ai-builder/$f?ref=$KIT_SHA" -H 'Accept: application/vnd.github.raw' > "$KIT/$f"
           done
           unset GH_TOKEN
-          bash "$KIT/kit-test.sh" "$RUNNER_TEMP/in" "$RUNNER_TEMP/tests"
+          /usr/bin/bash "$KIT/kit-test.sh" "$RUNNER_TEMP/in" "$RUNNER_TEMP/tests"
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
