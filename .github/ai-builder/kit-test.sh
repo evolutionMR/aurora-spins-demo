@@ -46,7 +46,16 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 set -uo pipefail
 export LC_ALL=C.UTF-8
 SUDO=(/usr/bin/sudo -n)
-die() { echo "::error::$*" >&2; exit 1; }
+# Stops the job. Any ✅ lines already written are thrown away, so a stop after the site's commands
+# (for example something new in a PATH folder) can never show as "tests passed".
+R=""
+die() {
+  echo "::error::$*" >&2
+  if [ -n "$R" ]; then
+    printf -- '- ❌ %s\n' "The test job stopped: $(printf '%s' "$*" | tr -d '\r\n<>@`' | /usr/bin/head -c 200)" > "$R"
+  fi
+  exit 1
+}
 
 # Prints one line for each PATH folder someone other than root could write to: the folder itself
 # (sticky or not: a sticky folder still lets anyone add a file), or a folder above it without the
@@ -86,7 +95,7 @@ sandbox_cmd() {
     "--unit=$unit" "--uid=$RUN_AS" "--gid=$RUN_AS" "--working-directory=$SITE"
     -p ProtectSystem=strict -p ProtectHome=tmpfs -p "BindPaths=$SITE_HOME" -p "ReadWritePaths=$SITE_HOME"
     -p PrivateTmp=yes -p PrivateDevices=yes -p ProtectProc=invisible -p NoNewPrivileges=yes -p RestrictSUIDSGID=yes
-    -p KillMode=control-group -p TimeoutStopSec=10 -p RuntimeMaxSec=600
+    -p KillMode=control-group -p TimeoutStopSec=10 -p RuntimeMaxSec=420
     -p IPAddressDeny=169.254.0.0/16 -p IPAddressDeny=168.63.129.16)
   for e in "${SITE_ENV[@]}"; do SANDBOX+=("--setenv=$e"); done
   SANDBOX+=(-- "$@")
@@ -186,7 +195,9 @@ if [ -n "$RUN_AS" ]; then
   IFS=: read -r -a job_dirs <<< "$KIT_JOB_PATH"
   for d in "${job_dirs[@]}" "$node_dir" /usr/local /opt /usr/share; do
     [[ "$d" == /* && -d "$d" ]] || continue
-    "${SUDO[@]}" /usr/bin/chmod -R o-w -- "$d" || die "Could not close $d."
+    # Only what others can write to is changed (fast on the big hosted images); path_problems
+    # below and the probe inside the sandbox are the hard checks.
+    "${SUDO[@]}" /usr/bin/find "$d" -xdev -perm -0002 ! -type l -exec /usr/bin/chmod o-w {} + || die "Could not close $d."
   done
   git_bin=$(lookup git || echo /usr/bin/git)
   problems=$(path_problems "$KIT_JOB_PATH:$CLEAN_PATH:$(/usr/bin/dirname -- "$(/usr/bin/realpath -- "$git_bin")"):$(/usr/bin/dirname -- "$(/usr/bin/realpath -- "$KIT_NODE")")")
@@ -201,7 +212,7 @@ if [ -n "$RUN_AS" ]; then
   done
   # What is in the PATH folders now; anything new after the site's commands fails the job.
   SNAP=$(/usr/bin/mktemp)
-  /usr/bin/find -H "${job_dirs[@]}" -mindepth 1 -maxdepth 1 -printf '%p %i\n' 2>/dev/null | LC_ALL=C /usr/bin/sort > "$SNAP"
+  /usr/bin/find -H "${job_dirs[@]}" -mindepth 1 -maxdepth 1 -printf '%p\t%i %C@ %s\0' 2>/dev/null | LC_ALL=C /usr/bin/sort -z > "$SNAP"
 else
   SITE="$PWD"; SITE_HOME=$(/usr/bin/mktemp -d)
 fi
@@ -311,13 +322,19 @@ fi
 # that impossible). If something did, it is removed before any later step can run it, and the job fails.
 if [ -n "$SNAP" ]; then
   now=$(/usr/bin/mktemp)
-  /usr/bin/find -H "${job_dirs[@]}" -mindepth 1 -maxdepth 1 -printf '%p %i\n' 2>/dev/null | LC_ALL=C /usr/bin/sort > "$now"
-  new=$(LC_ALL=C /usr/bin/comm -13 "$SNAP" "$now" | /usr/bin/sed 's/ [0-9]*$//')
+  /usr/bin/find -H "${job_dirs[@]}" -mindepth 1 -maxdepth 1 -printf '%p\t%i %C@ %s\0' 2>/dev/null | LC_ALL=C /usr/bin/sort -z > "$now"
+  # NUL-separated (any file name is safe); new or changed entries (inode, change time, size) count.
+  changed=()
+  while IFS= read -r -d '' e; do changed+=("${e%$'\t'*}"); done < <(LC_ALL=C /usr/bin/comm -z -13 "$SNAP" "$now")
   /usr/bin/rm -f "$now"
-  if [ -n "$new" ]; then
-    while IFS= read -r f; do "${SUDO[@]}" /usr/bin/rm -rf -- "$f"; done <<<"$new"
-    die "Something new appeared in a PATH folder while the site's commands ran (removed): $(printf '%s' "$new" | /usr/bin/head -c 300 | tr '\n' ' ')"
+  if [ "${#changed[@]}" -gt 0 ]; then
+    for f in "${changed[@]}"; do [[ "$f" == /* ]] && "${SUDO[@]}" /usr/bin/rm -rf -- "$f"; done
+    die "Something new or changed in a PATH folder while the site's commands ran (removed): $(printf '%s ' "${changed[@]}" | tr -d '\r\n' | /usr/bin/head -c 300)"
   fi
+  # Nothing of the test user's may outlive its commands: no lingering systemd --user, no process.
+  [ ! -e "/var/lib/systemd/linger/$RUN_AS" ] || die "The test user turned on a lingering systemd --user."
+  ! /usr/bin/pgrep -u "$RUN_AS" > /dev/null 2>&1 || die "A process of the test user was still running after its commands."
+  "${SUDO[@]}" /usr/bin/find /dev/shm /dev/mqueue -xdev -user "$RUN_AS" -delete 2>/dev/null || true
   problems=$(path_problems "$KIT_JOB_PATH")
   [ -z "$problems" ] || die "Others can write to a folder on PATH: $(printf '%s' "$problems" | tr '\n' ';')"
 fi

@@ -303,7 +303,7 @@ jobs:
     needs: [find, claude]
     if: always() && needs.find.outputs.go == 'yes'
     runs-on: ubuntu-24.04   # systemd 254+ for the sandbox (kit-test.sh)
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
     env:
