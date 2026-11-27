@@ -29,7 +29,7 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 # addresses (IPAddressDeny, plus iptables, removed at the end), and gets a clean environment: no
 # ACTIONS_* (no runtime token, no cache address), no GITHUB_TOKEN or GH_TOKEN, no NODE_OPTIONS, and
 # GITHUB_ENV, GITHUB_PATH and GITHUB_OUTPUT pointed at /dev/null. When the command ends, systemd
-# kills everything left in the unit (KillMode=control-group); after 10 minutes the unit is stopped.
+# kills everything left in the unit (KillMode=control-group); after 7 minutes the unit is stopped.
 # The user may not use cron or at, and gets no lingering systemd --user.
 # Why systemd-run and not bubblewrap: GitHub's hosted Ubuntu runners boot with systemd, so it is
 # always there; one unit gives the read-only system, the user switch, the clean environment, the
@@ -197,7 +197,7 @@ if [ -n "$RUN_AS" ]; then
     [[ "$d" == /* && -d "$d" ]] || continue
     # Only what others can write to is changed (fast on the big hosted images); path_problems
     # below and the probe inside the sandbox are the hard checks.
-    "${SUDO[@]}" /usr/bin/find "$d" -xdev -perm -0002 ! -type l -exec /usr/bin/chmod o-w {} + || die "Could not close $d."
+    "${SUDO[@]}" /usr/bin/find -H "$d" -xdev -perm -0002 ! -type l -exec /usr/bin/chmod o-w {} + || die "Could not close $d."
   done
   git_bin=$(lookup git || echo /usr/bin/git)
   problems=$(path_problems "$KIT_JOB_PATH:$CLEAN_PATH:$(/usr/bin/dirname -- "$(/usr/bin/realpath -- "$git_bin")"):$(/usr/bin/dirname -- "$(/usr/bin/realpath -- "$KIT_NODE")")")
@@ -333,7 +333,16 @@ if [ -n "$SNAP" ]; then
   fi
   # Nothing of the test user's may outlive its commands: no lingering systemd --user, no process.
   [ ! -e "/var/lib/systemd/linger/$RUN_AS" ] || die "The test user turned on a lingering systemd --user."
-  ! /usr/bin/pgrep -u "$RUN_AS" > /dev/null 2>&1 || die "A process of the test user was still running after its commands."
+  # A process killed a moment ago can still be listed while it dies: kill again, wait a little, then judge.
+  "${SUDO[@]}" /usr/bin/pkill -KILL -u "$RUN_AS" 2>/dev/null || true
+  left=1
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    /usr/bin/pgrep -u "$RUN_AS" > /dev/null 2>&1; rc=$?
+    [ "$rc" -eq 1 ] && { left=0; break; }        # 1 = none found
+    [ "$rc" -eq 0 ] || break                       # anything else: pgrep failed, so fail closed
+    /usr/bin/sleep 0.2
+  done
+  [ "$left" -eq 0 ] || die "A process of the test user was still running after its commands (or it could not be checked)."
   "${SUDO[@]}" /usr/bin/find /dev/shm /dev/mqueue -xdev -user "$RUN_AS" -delete 2>/dev/null || true
   problems=$(path_problems "$KIT_JOB_PATH")
   [ -z "$problems" ] || die "Others can write to a folder on PATH: $(printf '%s' "$problems" | tr '\n' ';')"
