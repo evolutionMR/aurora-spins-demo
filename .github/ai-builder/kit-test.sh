@@ -78,7 +78,8 @@ if [ -n "$verify" ]; then
   run verify "$verify" "${args[@]}"; rc=$?
   # The verify step prints one line per check, starting with ✅, ❌ or ⬜. Keep up to 12 of them.
   grep -E '^(✅|❌|⬜) ' "$OUT/verify.log" 2>/dev/null | head -12 | while IFS= read -r v; do line "${v%% *}" "${v#* }"; done
-  sizes=""; [ -n "${NODE_PATH:-}" ] && sizes=" at 390px and 1280px"
+  # Sizes only when the verify step's own lines say it looked at a phone and a laptop.
+  sizes=""; grep -qE '^(✅|❌) .*on a phone' "$OUT/verify.log" && grep -qE '^(✅|❌) .*on a laptop' "$OUT/verify.log" && sizes=" at 390px and 1280px"
   if [ "$rc" -eq 0 ]; then verified+=("$verify ${pages[*]}$sizes")
   else verified+=("$verify ${pages[*]}$sizes found problems"); fi
 fi
