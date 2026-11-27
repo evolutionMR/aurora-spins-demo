@@ -1,34 +1,52 @@
 # AI Builder guard: a change from Claude may not edit the checks that judge it.
-# If a claude/ branch touches the workflows, Claude's settings (.claude/, .mcp.json), REVIEW.md, CODEOWNERS,
-# the house rules or what the tests run (package.json, .npmrc, the site's test scripts), this check fails.
+# If a claude/ branch touches the workflows or the kit (.github/), Claude's settings (.claude/, .mcp.json),
+# REVIEW.md, CODEOWNERS, the house rules, the workflow's notes folder (.ai-builder/) or what the tests run
+# (package.json, .npmrc, the site's test scripts), this check fails.
 # Changes to those files go through a normal pull request from a person.
+#
+# THREAT MODEL. The AI Builder workflows already refuse any patch outside the folders in
+# .github/ai-builder/kit.json, so this is the second lock: it also catches a person or another tool
+# pushing such a file to a claude/ branch. No AI runs here, no secret is used, the token only reads,
+# and nothing from the pull request's text reaches a shell command (only file names, through a file).
 name: AI Builder guard
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-permissions:
-  contents: read
-  pull-requests: read
+permissions: {}
 
 jobs:
   guard:
     if: startsWith(github.head_ref, 'claude/')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
-      # Files a Claude change may never touch: the checks, Claude's settings, the house rules and
-      # anything that decides what the tests run. Add the site's own test scripts and server here.
-      PROTECTED: '^(\.github/|\.claude/|\.mcp\.json$|REVIEW\.md$|CODEOWNERS$|docs/CODEOWNERS$|CLAUDE\.md$|package\.json$|package-lock\.json$|\.npmrc$|node_modules/|scripts/|server\.js$)'
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      # Files a Claude change may never touch: the checks, the kit, Claude's settings, the house rules
+      # and anything that decides what the tests run. The site's own test scripts and server go in
+      # the "guard" list of .github/ai-builder/kit.json (read from the main branch, never the change).
+      PROTECTED: '^(\.github/|\.ai-builder/|\.claude/|\.mcp\.json$|REVIEW\.md$|CODEOWNERS$|docs/CODEOWNERS$|CLAUDE\.md$|package\.json$|package-lock\.json$|\.npmrc$|node_modules/)'
     steps:
       - name: Check which files changed
         run: |
           set -euo pipefail
+          protected="$PROTECTED"
+          # The site's own extra list, from kit.json on the main branch: "scripts/" (a folder) or "server.js" (a file).
+          if gh api "repos/$REPO/contents/.github/ai-builder/kit.json?ref=$BASE_SHA" -H 'Accept: application/vnd.github.raw' > kit.json 2>/dev/null; then
+            while IFS= read -r p; do
+              [[ "$p" =~ ^[A-Za-z0-9_][A-Za-z0-9_./-]{0,150}$ && "$p" != *..* ]] || { echo "::error::kit.json guard entry is not a plain path: $p"; exit 1; }
+              re="${p//./\\.}"
+              if [[ "$p" == */ ]]; then protected="$protected|^$re"; else protected="$protected|^$re\$"; fi
+            done < <(jq -r '(.guard // [])[] | tostring' kit.json)
+          fi
           gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > files.txt
-          if grep -E "$PROTECTED" files.txt; then
+          if grep -E "$protected" files.txt; then
             echo "::error::This change edits a file that judges changes (listed above). Claude must undo that part."
             exit 1
           fi

@@ -1,12 +1,12 @@
 ---
 name: done-when
-description: Turn a plain-words change request into 3 to 6 "done when" checks before building, then test each one. Use at the start of every AI Builder request and again when the request is updated.
+description: Turn a plain-words change request into 3 to 6 "done when" checks before building, then mark each one honestly. Use at the start of every AI Builder request and again when the request is updated. In the AI Builder workflows Claude cannot open the site; the workflow runs the tests and looks at the pages afterwards.
 ---
 
 # Done when: agree what "working" means before you build
 
-A request like "add a welcome offer banner" can be built many ways. Before writing any code,
-write down what a person should see when it works. Then build, then test every check.
+A request like "add a welcome offer banner" can be built many ways. Before changing anything,
+write down what a person should see when it works. Then build, then mark every check.
 The checks are shown to the person who asked, the AI reviewer checks them, and so does the engineer.
 
 ## 1. Write the checks (before building)
@@ -28,29 +28,28 @@ Rules for writing them:
 - Only what the request asked for. If you think something extra is needed, say so in your summary; do not add it.
 - If the request is unclear, write the check the way you understood it and say so. Do not guess silently.
 
-## 2. Build, then test each check
-Use the verify skill (`.claude/skills/verify/`) to run the site and look. Test every check on the
-running site, not by reading the code.
+## 2. Build, then mark each check honestly
+In the AI Builder workflows you can only read and write files: you cannot run the tests or open the
+site. So you have NOT seen any of it working. After you stop, the workflow runs the tests and opens
+the pages you list in `.ai-builder/run/verify.txt` (see the verify skill), and the preview and the
+AI review come after that.
+- ⬜ for every check you could not see yourself, with a few words, for example "The workflow checks the home page shows it" or "Look at the preview on a phone."
+- ❌ for a check you know is not done (you could not do it, or it would break a house rule). Say why.
+- Never mark ✅: you did not see it working.
 
-## 3. Report them in your final summary
-Add a heading line `### Done when` and put the checks under it, one list line each, each starting with one mark:
+## 3. Report them in your summary
+At the end of `.ai-builder/run/summary.md`, add a heading line `### Done when` and put the checks
+under it, one list line each, each starting with one mark:
 
 ```
 ### Done when
-- ✅ The banner shows at the top of the home page, above the games list.
-- ✅ On a phone the banner fits the screen and the button is easy to tap.
-- ❌ The offer is hidden in states where it is not allowed. Still shows in NY: the list of states is not read yet.
-- ⬜ Text in Maltese fits. Could not check: no Maltese text on the demo site.
+- ⬜ The banner shows at the top of the home page, above the games list. The workflow checks the home page shows it.
+- ⬜ On a phone the banner fits the screen and the button is easy to tap. Look at the preview on a phone.
+- ❌ The offer is hidden in states where it is not allowed. The list of states is not in this website's code.
 ```
 
 Use that heading only once, for the final list.
 
-- ✅ checked on the running site, and it works.
-- ❌ checked, and it does not work yet. Say why in a few words.
-- ⬜ could not check. Say why.
-
-Never mark ✅ for something you did not actually see working. A ❌ or ⬜ with an honest reason is better than a wrong ✅.
-
 ## When the request is updated
-Read the new message, change or add checks to match, test them all again (not only the new ones),
+Read the new message, change or add checks to match, mark them all again (not only the new ones),
 and report the full list again in the same way.

@@ -1,0 +1,8 @@
+{
+  "editable": ["public/"],
+  "guard": ["scripts/", "server.js"],
+  "install": "",
+  "test": "npm test",
+  "verify": "npm run verify --",
+  "playwright": "1.48.2"
+}
